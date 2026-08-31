@@ -1,0 +1,5 @@
+# One user per line. Generate a hash with:
+#   printf '%s' 'your-password' | sha256sum
+#
+# Keep users.conf private. Do not put plaintext passwords in this file.
+admin = 5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8

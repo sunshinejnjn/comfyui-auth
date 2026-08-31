@@ -1,0 +1,10 @@
+users.conf
+ldap.conf
+.session_secret
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vscode/
+.codex/
+.claude/
+.cursor/

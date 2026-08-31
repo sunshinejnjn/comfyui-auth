@@ -1,0 +1,8 @@
+# LDAP bind settings. SEARCH_BASE DC components determine the login domain.
+# For example, DC=example,DC=com accepts usernames ending in @example.com.
+LDAP_SERVER = ldap://ldap.example.com:389
+SEARCH_BASE = DC=example,DC=com
+
+# Comma-separated account names without the @domain suffix. An LDAP bind is
+# attempted only after the account name has passed this whitelist.
+WHITELIST = user1, user2
