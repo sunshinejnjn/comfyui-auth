@@ -166,10 +166,11 @@ def verify_credentials(users: Mapping[str, str], username: str, password: str) -
 def load_api_keys(path: Path) -> dict[str, str]:
     """Load API keys from an ``apikeys.conf`` file.
 
-    Each entry is ``label = sha256(key)`` where ``label`` is an optional
-    reference name; a bare 64-hex hash without ``=`` is also accepted (no
-    label). Blank lines and lines beginning with ``#`` or ``;`` are ignored.
-    Returns a mapping of {stored_key_hash: label}.
+    Each entry is ``label = key`` where ``label`` is an optional reference
+    name; a bare key on its own line (no ``=``) is also accepted (no label).
+    Keys are stored as plaintext and compared directly at verify time. Blank
+    lines and lines beginning with ``#`` or ``;`` are ignored. Returns a
+    mapping of {raw_key: label}.
     """
     if not path.is_file():
         raise ApiKeysConfigError(f"API key configuration file does not exist: {path}")
@@ -187,17 +188,17 @@ def load_api_keys(path: Path) -> dict[str, str]:
         label, separator, stored = line.partition("=")
         if separator:
             stored = stored.strip()
+            label = label.strip()
         else:
-            label, stored = "", line
-        label = label.strip()
+            stored = line.strip()
+            label = ""
 
-        normalized = stored.lower()
-        if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
-            errors.append(f"line {line_number}: stored value must be 64 hexadecimal characters")
-        elif normalized in keys:
-            errors.append(f"line {line_number}: duplicate stored value")
+        if not stored:
+            errors.append(f"line {line_number}: key is empty")
+        elif stored in keys:
+            errors.append(f"line {line_number}: duplicate key")
         else:
-            keys[normalized] = label
+            keys[stored] = label
 
     if errors:
         raise ApiKeysConfigError(
@@ -211,13 +212,15 @@ def load_api_keys(path: Path) -> dict[str, str]:
 def verify_api_key(api_key: str | None, keys: Mapping[str, str]) -> bool:
     """Return True if *api_key* matches one of the configured API keys.
 
-    The presented key is hashed with :func:`password_sha256` and tested
-    against the stored (hash) values; the input is always a fixed 64-character
-    hex digest, so set membership is used instead of a linear scan.
+    Keys are stored as raw plaintext and compared against the presented key
+    using constant-time comparison; no hashing is performed.
     """
     if not api_key or not keys:
         return False
-    return password_sha256(api_key) in keys
+    for stored in keys:
+        if hmac.compare_digest(stored, api_key):
+            return True
+    return False
 
 
 class SessionSigner:

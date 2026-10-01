@@ -51,32 +51,27 @@ class ApiKeysConfigTests(unittest.TestCase):
         path.write_text(contents, encoding="utf-8")
         return path
 
-    def test_loads_bare_hashes(self):
-        key = password_sha256("my-api-key")
-        keys = load_api_keys(self.write_config(f"# keys\n{key}\n\n{password_sha256('other')}\n"))
-        self.assertEqual(keys, {key: "", password_sha256("other"): ""})
+    def test_loads_bare_keys(self):
+        keys = load_api_keys(self.write_config(f"# keys\nmy-api-key\n\nother\n"))
+        self.assertEqual(keys, {"my-api-key": "", "other": ""})
 
     def test_loads_labeled_entries_and_comments(self):
-        a = password_sha256("a")
-        b = password_sha256("b")
         keys = load_api_keys(
-            self.write_config(f"; comment\nmy-key = {a}\n\n   ; spaced\n    another = {b}\n")
+            self.write_config(f"; comment\nmy-key = correct-key\n\n   ; spaced\n    another = second\n")
         )
-        self.assertEqual(keys, {a: "my-key", b: "another"})
+        self.assertEqual(keys, {"correct-key": "my-key", "second": "another"})
 
     def test_verify_api_key_matches_only_when_secret_matches(self):
-        a = password_sha256("correct-key")
-        keys = {a: "primary"}
+        keys = {"correct-key": "primary"}
         self.assertTrue(verify_api_key("correct-key", keys))
         self.assertFalse(verify_api_key("wrong-key", keys))
         self.assertFalse(verify_api_key("correct-key", {}))
         self.assertFalse(verify_api_key(None, keys))
 
-    def test_rejects_non_hex_duplicate_and_empty_file(self):
-        bad = password_sha256("valid")
+    def test_rejects_duplicate_and_empty_file(self):
         cases = [
-            "not-a-real-hash\n",
-            f"dup = {bad}\ndup = {bad}\n",
+            "dup = key\ndup = key\n",
+            "no-label =\n",
             "# only comments\n",
         ]
         for contents in cases:
