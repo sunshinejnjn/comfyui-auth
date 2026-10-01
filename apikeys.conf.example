@@ -1,0 +1,13 @@
+# One API key per line. The stored value must be the SHA-256 hash of the key.
+# Generate a hash with:
+#   printf '%s' 'your-api-key' | sha256sum
+#
+# An optional label may precede the hash for reference (it is ignored by
+# auth):  label = <sha256>
+# A bare hash on its own line is also accepted (no label).
+#
+# Lines beginning with # or ; and blank lines are ignored.
+# Keep apikeys.conf private — it should never leave the ComfyUI host.
+
+# Example:
+# my-comfyui-key = 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f0010a

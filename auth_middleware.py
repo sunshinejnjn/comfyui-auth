@@ -14,13 +14,16 @@ from urllib.parse import quote
 from aiohttp import web
 
 from .auth_core import (
+    ApiKeysConfigError,
     LDAPConfig,
     LDAPConfigError,
     SessionSigner,
     UserConfigError,
+    load_api_keys,
     load_ldap_config,
     load_or_create_secret,
     load_users,
+    verify_api_key,
     verify_credentials,
 )
 from .ldap_auth import authenticate_ldap
@@ -66,6 +69,11 @@ def _ldap_path() -> Path:
     return Path(configured).expanduser().resolve() if configured else PLUGIN_DIR / "ldap.conf"
 
 
+def _apikeys_path() -> Path:
+    configured = os.environ.get("COMFYUI_AUTH_APIKEYS_FILE")
+    return Path(configured).expanduser().resolve() if configured else PLUGIN_DIR / "apikeys.conf"
+
+
 def _session_max_age() -> int:
     raw_value = os.environ.get("COMFYUI_AUTH_SESSION_MAX_AGE", "86400")
     try:
@@ -96,6 +104,27 @@ def _load_ldap_for_request() -> tuple[LDAPConfig | None, str | None]:
     except LDAPConfigError as exc:
         _log_config_error_once(str(exc))
         return None, str(exc)
+
+
+def _load_apikeys_for_request() -> tuple[dict[str, str] | None, str | None]:
+    path = _apikeys_path()
+    if not path.exists():
+        return None, None
+    try:
+        return load_api_keys(path), None
+    except ApiKeysConfigError as exc:
+        _log_config_error_once(str(exc))
+        return None, str(exc)
+
+
+def _extract_api_key(request: web.Request) -> str | None:
+    """Return the presented API key from ``X-API-Key`` or ``Authorization: Bearer``."""
+    if request.headers.get("X-API-Key"):
+        return request.headers.get("X-API-Key")
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return None
 
 
 def _log_config_error_once(message: str) -> None:
@@ -189,9 +218,21 @@ def build_auth_middleware(signer: SessionSigner):
     async def auth_middleware(request: web.Request, handler):
         users, users_error = _load_users_for_request()
         ldap_config, ldap_error = _load_ldap_for_request()
+        api_keys, api_keys_error = _load_apikeys_for_request()
         config_error = None
-        if not users and ldap_config is None:
-            config_error = ldap_error or users_error or "No authentication provider is configured"
+        if not users and ldap_config is None and api_keys is None:
+            config_error = api_keys_error or ldap_error or users_error or "No authentication provider is configured"
+
+        # API key path is independent of the login/session flow: honour a
+        # presented ``X-API-Key`` or ``Authorization: Bearer ***`` up front.
+        api_key = _extract_api_key(request)
+        if api_key is not None:
+            if api_keys_error:
+                return _login_page(config_error=api_keys_error)
+            if not verify_api_key(api_key, api_keys):
+                return _redirect_to_login(request)
+            request["comfyui_auth_username"] = "apikey"
+            return await handler(request)
 
         if request.path == LOGIN_PATH:
             if request.method == "GET":

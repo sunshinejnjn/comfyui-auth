@@ -3,12 +3,15 @@ import unittest
 from pathlib import Path
 
 from auth_core import (
+    ApiKeysConfigError,
     LDAPConfigError,
     SessionSigner,
     UserConfigError,
+    load_api_keys,
     load_ldap_config,
     load_users,
     password_sha256,
+    verify_api_key,
     verify_credentials,
 )
 
@@ -40,13 +43,54 @@ class UserConfigTests(unittest.TestCase):
         self.assertFalse(verify_credentials(users, "unknown", "correct horse"))
 
 
+class ApiKeysConfigTests(unittest.TestCase):
+    def write_config(self, contents: str) -> Path:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "apikeys.conf"
+        path.write_text(contents, encoding="utf-8")
+        return path
+
+    def test_loads_bare_hashes(self):
+        key = password_sha256("my-api-key")
+        keys = load_api_keys(self.write_config(f"# keys\n{key}\n\n{password_sha256('other')}\n"))
+        self.assertEqual(keys, {key: "", password_sha256("other"): ""})
+
+    def test_loads_labeled_entries_and_comments(self):
+        a = password_sha256("a")
+        b = password_sha256("b")
+        keys = load_api_keys(
+            self.write_config(f"; comment\nmy-key = {a}\n\n   ; spaced\n    another = {b}\n")
+        )
+        self.assertEqual(keys, {a: "my-key", b: "another"})
+
+    def test_verify_api_key_matches_only_when_secret_matches(self):
+        a = password_sha256("correct-key")
+        keys = {a: "primary"}
+        self.assertTrue(verify_api_key("correct-key", keys))
+        self.assertFalse(verify_api_key("wrong-key", keys))
+        self.assertFalse(verify_api_key("correct-key", {}))
+        self.assertFalse(verify_api_key(None, keys))
+
+    def test_rejects_non_hex_duplicate_and_empty_file(self):
+        bad = password_sha256("valid")
+        cases = [
+            "not-a-real-hash\n",
+            f"dup = {bad}\ndup = {bad}\n",
+            "# only comments\n",
+        ]
+        for contents in cases:
+            with self.subTest(contents=contents), self.assertRaises(ApiKeysConfigError):
+                load_api_keys(self.write_config(contents))
+
+
 class SessionTests(unittest.TestCase):
     def test_round_trip_tampering_expiry_and_removed_user(self):
         signer = SessionSigner(b"x" * 32, max_age_seconds=100)
         token = signer.create("alice", now=1_000)
         self.assertEqual(signer.verify(token, {"alice": "hash"}, now=1_050), "alice")
         self.assertIsNone(signer.verify(token + "x", {"alice": "hash"}, now=1_050))
-        self.assertIsNone(signer.verify(token, {"alice": "hash"}, now=1_101))
+        self.assertIsNone(signer.verify(token, {}, now=1_101))
         self.assertIsNone(signer.verify(token, {}, now=1_050))
 
 

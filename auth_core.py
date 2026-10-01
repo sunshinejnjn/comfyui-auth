@@ -22,6 +22,10 @@ class LDAPConfigError(ValueError):
     """Raised when ldap.conf exists but is invalid."""
 
 
+class ApiKeysConfigError(ValueError):
+    """Raised when apikeys.conf exists but is invalid."""
+
+
 @dataclass(frozen=True)
 class LDAPConfig:
     server: str
@@ -157,6 +161,63 @@ def verify_credentials(users: Mapping[str, str], username: str, password: str) -
     supplied = password_sha256(password)
     valid = hmac.compare_digest(expected, supplied)
     return valid and username in users
+
+
+def load_api_keys(path: Path) -> dict[str, str]:
+    """Load API keys from an ``apikeys.conf`` file.
+
+    Each entry is ``label = sha256(key)`` where ``label`` is an optional
+    reference name; a bare 64-hex hash without ``=`` is also accepted (no
+    label). Blank lines and lines beginning with ``#`` or ``;`` are ignored.
+    Returns a mapping of {stored_key_hash: label}.
+    """
+    if not path.is_file():
+        raise ApiKeysConfigError(f"API key configuration file does not exist: {path}")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ApiKeysConfigError(f"Cannot read API key configuration: {exc}") from exc
+
+    keys: dict[str, str] = {}
+    errors: list[str] = []
+    for line_number, raw_line in enumerate(lines, 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith(";"):
+            continue
+        label, separator, stored = line.partition("=")
+        if separator:
+            stored = stored.strip()
+        else:
+            label, stored = "", line
+        label = label.strip()
+
+        normalized = stored.lower()
+        if len(normalized) != 64 or any(c not in "0123456789abcdef" for c in normalized):
+            errors.append(f"line {line_number}: stored value must be 64 hexadecimal characters")
+        elif normalized in keys:
+            errors.append(f"line {line_number}: duplicate stored value")
+        else:
+            keys[normalized] = label
+
+    if errors:
+        raise ApiKeysConfigError(
+            "Invalid API key configuration(" + "; ".join(errors) + ")"
+        )
+    if not keys:
+        raise ApiKeysConfigError(f"No API keys are configured in {path}")
+    return keys
+
+
+def verify_api_key(api_key: str | None, keys: Mapping[str, str]) -> bool:
+    """Return True if *api_key* matches one of the configured API keys.
+
+    The presented key is hashed with :func:`password_sha256` and tested
+    against the stored (hash) values; the input is always a fixed 64-character
+    hex digest, so set membership is used instead of a linear scan.
+    """
+    if not api_key or not keys:
+        return False
+    return password_sha256(api_key) in keys
 
 
 class SessionSigner:
